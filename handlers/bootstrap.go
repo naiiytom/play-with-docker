@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -29,6 +30,9 @@ import (
 	oauth2Google "golang.org/x/oauth2/google"
 	"google.golang.org/api/people/v1"
 )
+
+//go:generate go run github.com/jteeuwen/go-bindata/go-bindata -pkg handlers -o gen_bindata.go -prefix ../www/ ../www/...
+//go:generate gofmt -w -s gen_bindata.go
 
 var core pwd.PWDApi
 var e event.EventApi
@@ -84,19 +88,21 @@ func Register(extend HandlerExtender) {
 	corsRouter.HandleFunc("/sessions/{sessionId}/instances/{instanceName}/file", file).Methods("GET")
 
 	r.HandleFunc("/sessions/{sessionId}/instances/{instanceName}/editor", func(rw http.ResponseWriter, r *http.Request) {
-		http.ServeFile(rw, r, "www/editor.html")
+		serveAsset(rw, r, "editor.html")
 	})
 
 	r.HandleFunc("/ooc", func(rw http.ResponseWriter, r *http.Request) {
-		http.ServeFile(rw, r, "./www/ooc.html")
+		serveAsset(rw, r, "occ.html")
 	}).Methods("GET")
 	r.HandleFunc("/503", func(rw http.ResponseWriter, r *http.Request) {
-		http.ServeFile(rw, r, "./www/503.html")
+		serveAsset(rw, r, "503.html")
 	}).Methods("GET")
 	r.HandleFunc("/p/{sessionId}", Home).Methods("GET")
-	r.PathPrefix("/assets").Handler(http.FileServer(http.Dir("./www")))
+	r.PathPrefix("/assets").HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		serveAsset(rw, r, r.URL.Path[1:])
+	})
 	r.HandleFunc("/robots.txt", func(rw http.ResponseWriter, r *http.Request) {
-		http.ServeFile(rw, r, "www/robots.txt")
+		serveAsset(rw, r, "robots.txt")
 	})
 
 	corsRouter.HandleFunc("/sessions/{sessionId}/ws/", WSH)
@@ -186,6 +192,15 @@ func Register(extend HandlerExtender) {
 	}
 }
 
+func serveAsset(w http.ResponseWriter, r *http.Request, name string) {
+	a, err := Asset(name)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(a))
+}
+
 func initPlaygrounds() {
 	pgs, err := core.PlaygroundList()
 	if err != nil {
@@ -203,8 +218,15 @@ func initAssets(p *types.Playground) {
 		p.AssetsDir = "default"
 	}
 
+	lpath := path.Join(p.AssetsDir, "landing.html")
+	landing, err := Asset(lpath)
+	if err != nil {
+		log.Fatalf("Error loading %v: %v", lpath, err)
+	}
+
 	var b bytes.Buffer
-	t, err := template.New("landing.html").Delims("[[", "]]").ParseFiles(fmt.Sprintf("./www/%s/landing.html", p.AssetsDir))
+	t := template.New("landing.html").Delims("[[", "]]")
+	t, err = t.Parse(string(landing))
 	if err != nil {
 		log.Fatalf("Error parsing template %v", err)
 	}
